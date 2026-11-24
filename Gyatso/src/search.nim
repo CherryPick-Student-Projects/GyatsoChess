@@ -109,8 +109,28 @@ proc qSearch*(b: var Board, alpha, beta, ply: int,
   if b.isRepetition() or b.isFiftyMove():
     return system.int((info.nodes mod 5)) - 2
 
+  let pvNode = beta - alpha > 1
+
+  # TT probe
+  var ttMove = NullMove
+  var ttScore = 0
+  var ttDepth = 0
+  var ttBound = 0'u8
+  var ttEval = NoEval
+  var ttPv = false
+  let hasTT = probeTT(cast[system.uint64](b.hash), ply, ttMove, ttScore,
+                      ttDepth, ttBound, ttEval, ttPv)
+
+  # TT cutoff
+  if hasTT and not pvNode:
+    if ttBound == BoundExact or
+       (ttBound == BoundAlpha and ttScore <= alpha) or
+       (ttBound == BoundBeta and ttScore >= beta):
+      return ttScore
+
   let inCheckQ = not b.checkers.isEmpty
-  let rawQEval = evaluate(b, nnue[])
+  let rawQEval = if hasTT and ttEval != NoEval: system.int(ttEval)
+                 else: evaluate(b, nnue[])
   let standPat = if inCheckQ: rawQEval
                  else: clamp(rawQEval + getCorrection(b), -MateThreshold + 1,
                      MateThreshold - 1)
@@ -124,9 +144,13 @@ proc qSearch*(b: var Board, alpha, beta, ply: int,
   let prevPiece = if ply > 0: system.int(stack[ply - 1].piece) else: -1
   let prevToSq = if ply > 0: stack[ply - 1].move.histToSq.int else: -1
 
+  # Only a capturing TT move is useful in qsearch.
+  let qsTtMove = if hasTT and ttMove != NullMove and isCapture(b, ttMove): ttMove
+                 else: NullMove
+
   var picker {.noinit.}: MovePicker
   initMovePicker(picker,
-    addr b, NullMove, ply, prevPiece, prevToSq,
+    addr b, qsTtMove, ply, prevPiece, prevToSq,
     -1, -1,
     inCheck = inCheckQ, isQSearch = true)
 
@@ -134,9 +158,7 @@ proc qSearch*(b: var Board, alpha, beta, ply: int,
     let m = picker.next()
     if m == NullMove: break
 
-    # Promotions from StageGoodNoisies already passed see(m, 0); from
-    # StageBadNoisies they already failed it. (qsearch passes NullMove
-    # as ttMove, so no other stage yields promotions.)
+    # A TT-stage promotion capture is searched regardless.
     if not inCheckQ and m.isPromotion() and picker.stage == StageBadNoisies:
       continue
 
