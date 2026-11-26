@@ -10,6 +10,8 @@ const
   EntriesPerCluster* = 3
 
   NoEval* = 32767'i16
+  TtAgeWeight*  = 2
+  TtKeepMargin* = 4
 
 type
   TTEntry* = object
@@ -168,19 +170,16 @@ proc storeTT*(key: uint64, move: Move, score: int16, depth: int8,
   elif score < -MateThreshold:
     storedScore = score - int16(ply)
 
-  let dataVal = packData(move, storedScore, depth, bound, ttGeneration, eval, ttPv)
-
-  # Replacement policy: always reuse a matching key slot; otherwise replace
-  # the entry with the lowest score = depth - relativeAge * 2, where
-  # relativeAge = (32 + ttGeneration - entry.generation) mod 32.
   var target   = 0
   var minScore = high(int)
+  var matched  = false
 
   for i in 0 ..< EntriesPerCluster:
     let entryData = cluster.entries[i].data
     let entryKey  = cluster.entries[i].key
 
     if (entryKey xor entryData) == key:
+      matched = true
       target = i
       break
 
@@ -188,11 +187,23 @@ proc storeTT*(key: uint64, move: Move, score: int16, depth: int8,
     let eg = uint8((entryData shr 42) and 0x1F'u64)
 
     let relativeAge  = int((32'u16 + uint16(ttGeneration) - uint16(eg)) and 31'u16)
-    let replaceScore = ed - relativeAge * 2
+    let replaceScore = ed - relativeAge * TtAgeWeight
 
     if replaceScore < minScore:
       minScore = replaceScore
       target = i
 
+  if matched:
+    let oldData  = cluster.entries[target].data
+    let oldDepth = system.int(cast[int8](uint8((oldData shr 32) and 0xFF'u64)))
+    let oldGen   = uint8((oldData shr 42) and 0x1F'u64)
+    let isStale  = oldGen != (ttGeneration and GenMask)
+    let newDepth = system.int(depth) + (if ttPv: 2 else: 0)
+    let overwrite = (bound == BoundExact and depth > 0) or
+                    isStale or
+                    newDepth > oldDepth - TtKeepMargin
+    if not overwrite: return
+
+  let dataVal = packData(move, storedScore, depth, bound, ttGeneration, eval, ttPv)
   cluster.entries[target].data = dataVal
   cluster.entries[target].key  = key xor dataVal
