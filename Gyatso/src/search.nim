@@ -242,7 +242,7 @@ proc negamax*[pvNode: static bool](b: var Board, depth, alpha, beta, ply: int,
   # Internal Iterative Reduction (IIR)
   var depth = depth
   if depth >= IirMinDepth and ttMove == NullMove and not inCheck and
-      not isSingularSearch:
+      not isSingularSearch and ttDepth > 0:
     dec depth
 
   if depth <= 0:
@@ -289,6 +289,7 @@ proc negamax*[pvNode: static bool](b: var Board, depth, alpha, beta, ply: int,
   let ttWinningCapture = hasTT and
                          ttBound == BoundBeta and
                          ttMove != NullMove and
+                         ttDepth > 0 and
                          isCapture(b, ttMove) and
                          isValuableVictim(b.mailbox[ttMove.toSq.int].pieceType)
 
@@ -505,7 +506,7 @@ proc negamax*[pvNode: static bool](b: var Board, depth, alpha, beta, ply: int,
           inc reduction
 
         # TT-move reduction
-        if hasTT and ttMove != NullMove and ttBound != BoundAlpha:
+        if hasTT and ttMove != NullMove and ttBound != BoundAlpha and ttDepth > 0:
           inc reduction
 
         # History-based LMR adjustment
