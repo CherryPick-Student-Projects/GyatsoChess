@@ -109,7 +109,10 @@ proc qSearch*(b: var Board, alpha, beta, ply: int,
   if b.isRepetition() or b.isFiftyMove():
     return system.int((info.nodes mod 5)) - 2
 
+  let pvNode = beta - alpha > 1
+  let hashVal = cast[system.uint64](b.hash)
   let inCheckQ = not b.checkers.isEmpty
+
   let rawQEval = evaluate(b, nnue[])
   let standPat = if inCheckQ: rawQEval
                  else: clamp(rawQEval + getCorrection(b), -MateThreshold + 1,
@@ -117,9 +120,13 @@ proc qSearch*(b: var Board, alpha, beta, ply: int,
   var bestScore = standPat
 
   if standPat >= beta:
+    if not inCheckQ:
+      storeTT(hashVal, NullMove, standPat.int16, 0'i8, BoundBeta, ply,
+              int16(rawQEval), pvNode)
     return standPat
 
   var curAlpha = max(alpha, standPat)
+  var bestMove = NullMove
 
   let prevPiece = if ply > 0: system.int(stack[ply - 1].piece) else: -1
   let prevToSq = if ply > 0: stack[ply - 1].move.histToSq.int else: -1
@@ -140,6 +147,7 @@ proc qSearch*(b: var Board, alpha, beta, ply: int,
     if not inCheckQ and m.isPromotion() and picker.stage == StageBadNoisies:
       continue
 
+    prefetchTT(b.keyAfter(m))
     nnuePush(b, m, nnue[])
     b.makeMove(m)
     prefetchEvalCache(nnue[], cast[system.uint64](b.hash))
@@ -154,9 +162,18 @@ proc qSearch*(b: var Board, alpha, beta, ply: int,
     if score > bestScore:
       bestScore = score
       if score >= beta:
-        return bestScore
+        bestMove = m
+        break
       if score > curAlpha:
         curAlpha = score
+        bestMove = m
+
+  if not inCheckQ:
+    let bound = if bestScore >= beta: BoundBeta
+                elif bestScore > alpha: BoundExact
+                else: BoundAlpha
+    storeTT(hashVal, bestMove, bestScore.int16, 0'i8, bound, ply,
+            int16(rawQEval), pvNode)
 
   return bestScore
 
