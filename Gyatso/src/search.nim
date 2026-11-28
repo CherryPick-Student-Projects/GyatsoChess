@@ -491,6 +491,9 @@ proc negamax*[pvNode: static bool](b: var Board, depth, alpha, beta, ply: int,
         if hasTT and ttMove != NullMove and ttBound != BoundAlpha:
           inc reduction
 
+        if hasTT and ttMove != NullMove and isCapture(b, ttMove) and isQuiet:
+          inc reduction
+
         # History-based LMR adjustment
         if isQuiet:
           let curPiece = system.int(stack[ply].piece)
